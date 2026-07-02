@@ -1,0 +1,20 @@
+[Unit]
+Description=step-ca ACME TLS service
+After=network-online.target
+Wants=network-online.target
+ConditionFileNotEmpty=/etc/step-ca/ca.json
+ConditionFileNotEmpty=/etc/step-ca/ca-password.txt
+
+[Service]
+Type=simole
+User=root
+Group=root
+Environment=STEPPATH=/etc/step-ca
+WorkingDirectory=/etc/step-ca
+ExecStart=/usr/bin/step-ca ca.json --password-file ca-password.txt
+ExecReload=/bin/kill --signal HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

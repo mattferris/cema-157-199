@@ -1,0 +1,60 @@
+- name: Setup instructor VM for Lab 4.1
+  hosts: ubuntu-lab-matt
+  remote_user: root
+
+  tasks:
+
+    - name: Add smallstep repo
+      ansible.builtin.deb822_repository:
+        name: smallstep
+        types: deb
+        suites: debs
+        uris: https://packages.smallstep.com/stable/debian
+        components: main
+        signed_by: https://packages.smallstep.com/keys/apt/repo-signing-key.gpg
+
+    - name: Install step-ca
+      ansible.builtin.apt:
+        name:
+          - step
+          - step-cli
+          - step-ca
+        state: present
+        update_cache: true
+
+    - name: Create step-ca config directory
+      ansible.builtin.file:
+        path: /etc/step-ca
+        state: directory
+        mode: 0600
+
+    - name: Copy step-ca password file
+      ansible.builtin.copy:
+        src: files/ca-password.txt
+        dest: /etc/step-ca/ca-password.txt
+        owner: root
+        group: root
+        mode: 0600
+
+    - name: Copy step-ca config
+      ansible.builtin.copy:
+        src: files/ca.json
+        dest: /etc/step-ca/ca.json
+        owner: root
+        group: root
+        mode: 0600
+
+    - name: Create step-ca systemd service definition
+      ansible.builtin.copy:
+        src: files/step-ca.service
+        dest: /etc/systemd/system/step-ca.service
+        owner: root
+        group: root
+        mode: 0600
+
+    - name: Start step-ca service
+      ansible.builtin.systemd_service:
+        name: step-ca
+        state: started
+        enabled: true
+        daemon_reload: true
