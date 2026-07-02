@@ -1,0 +1,13 @@
+$TTL 5m
+example.org.	IN	SOA	a.ns.example.org.	hostmaster@example.org.	(
+	2026070101; serial
+	12h; refresh
+	1h; retry
+	2w; expiry
+	5m; minimum TTL
+)
+
+@	IN	NS	a.ns.example.org.
+@	IN	A	{{ansible_facts['default_ipv4']['address']}}
+a.ns	IN	A	{{ansible_facts['default_ipv4']['address']}}
+
