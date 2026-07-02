@@ -1,0 +1,173 @@
+- name: Obtain TLS certificate from Let's Encrypt for nginx
+  hosts: all
+  vars:
+    domain_name: foo.example.org
+    acme_account_email: admin@example.org
+    acme_challenge_type: http-01
+    certificate_dir: /etc/nginx/ssl
+    acme_account_key: /etc/nginx/ssl/account.key
+    acme_certificate_key: /etc/nginx/ssl/cert.key
+    acme_certificate_csr: /etc/nginx/ssl/cert.csr
+    acme_certificate_crt: /etc/nginx/ssl/cert.crt
+    acme_certificate_chain: /etc/nginx/ssl/fullchain.crt
+    acme_challenge_dir: /var/www/html
+    acme_directory: https://acme.example.org/acme/acme/directory
+
+  tasks:
+    - name: Install required packages
+      apt:
+        name:
+          - python3-cryptography
+          - python3-openssl
+          - python3-requests
+        state: present
+
+    - name: Create custom certificates directory
+      file:
+        path: /usr/local/share/ca-certificates
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Copy root certificate to host
+      copy:
+        src: files/step-ca/root_ca.crt
+        dest: /usr/local/share/ca-certificates
+        mode: '0644'
+        owner: root
+        group: root
+      register: cert_copied
+
+    - name: Update certificate authority store
+      command: update-ca-certificates
+      when: cert_copied.changed
+
+    - name: Create SSL certificate directory
+      file:
+        path: "{{ certificate_dir }}"
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Create ACME challenge directory
+      file:
+        path: "{{ acme_challenge_dir }}"
+        state: directory
+        mode: '0755'
+        owner: www-data
+        group: www-data
+
+    - name: Generate ACME account private key
+      openssl_privatekey:
+        path: "{{ acme_account_key }}"
+        size: 2048
+        mode: '0600'
+        type: RSA
+
+    - name: Generate certificate private key
+      openssl_privatekey:
+        path: "{{ acme_certificate_key }}"
+        size: 2048
+        mode: '0600'
+        type: RSA
+
+    - name: Generate certificate signing request (CSR)
+      openssl_csr:
+        path: "{{ acme_certificate_csr }}"
+        privatekey_path: "{{ acme_certificate_key }}"
+        common_name: "{{ domain_name }}"
+        subject_alt_name: "DNS:{{ domain_name }}"
+
+    - name: Create ACME account
+      community.crypto.acme_account:
+        account_key_src: "{{ acme_account_key }}"
+        state: present
+        acme_directory: "{{ acme_directory }}"
+        acme_version: 2
+        terms_agreed: yes
+        contact: "mailto:{{ acme_account_email }}"
+      register: acme_account_result
+
+    - name: Request ACME certificate challenge
+      community.crypto.acme_certificate:
+        account_key_src: "{{ acme_account_key }}"
+        account_uri: "{{ acme_account_result.account_uri }}"
+        csr: "{{ acme_certificate_csr }}"
+        cert: "{{ acme_certificate_crt }}"
+        fullchain: "{{ acme_certificate_chain }}"
+        acme_directory: "{{ acme_directory }}"
+        terms_agreed: yes
+      register: acme_challenge
+
+    - name: Create challenge directory
+      ansible.builtin.file:
+        path: /var/www/html/.well-known/acme-challenge
+        state: directory
+        mode: 0644
+
+    - name: Create challenge response file
+      copy:
+        content: "{{ acme_challenge.challenge_data[domain_name][acme_challenge_type].resource_value }}"
+        dest: "{{ acme_challenge_dir }}/{{ acme_challenge.challenge_data[domain_name][acme_challenge_type].resource }}"
+        mode: '0644'
+        owner: www-data
+        group: www-data
+      when: acme_challenge.challenge_data is defined
+
+    - name: Wait for challenge validation
+      pause:
+        seconds: 5
+
+    - name: Validate ACME challenge
+      community.crypto.acme_certificate:
+        account_key_src: "{{ acme_account_key }}"
+        account_uri: "{{ acme_account_result.account_uri }}"
+        csr: "{{ acme_certificate_csr }}"
+        cert: "{{ acme_certificate_crt }}"
+        fullchain: "{{ acme_certificate_chain }}"
+        acme_directory: "{{ acme_directory }} "
+        acme_version: 2
+      when: acme_challenge.challenge_data is defined
+
+    - name: Verify certificate was obtained
+      stat:
+        path: "{{ acme_certificate_crt }}"
+      register: cert_stat
+
+    - name: Display certificate info
+      debug:
+        msg: "Certificate successfully obtained: {{ acme_certificate_crt }}"
+      when: cert_stat.stat.exists
+
+    - name: Set certificate file permissions
+      file:
+        path: "{{ item }}"
+        mode: '0644'
+        owner: root
+        group: root
+      loop:
+        - "{{ acme_certificate_crt }}"
+        - "{{ acme_certificate_chain }}"
+
+    - name: Configure nginx to use certificate
+      template:
+        src: nginx/default.j2
+        dest: /etc/nginx/sites-available/default
+        mode: '0644'
+      notify: reload nginx
+
+    - name: Enable nginx site
+      file:
+        src: /etc/nginx/sites-available/default
+        dest: /etc/nginx/sites-enabled/default
+        state: link
+      notify: reload nginx
+
+  handlers:
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
